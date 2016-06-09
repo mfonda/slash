@@ -12,13 +12,6 @@ import (
 	"net/http"
 )
 
-// Attachment represents a slack message attachment
-// Currently, only images are support
-type Attachment struct {
-	ImageUrl string `json:"image_url"`
-	Text     string `json:"text"`
-}
-
 // Request represents an incoming slash command request
 type Request struct {
 	Token       string
@@ -33,6 +26,13 @@ type Request struct {
 	ResponseUrl string
 }
 
+// Attachment represents a slack message attachment
+// Currently, only images are support
+type Attachment struct {
+	ImageUrl string `json:"image_url"`
+	Text     string `json:"text"`
+}
+
 // Response represents a response to slash command
 type Response struct {
 	ResponseType string       `json:"response_type"`
@@ -40,25 +40,11 @@ type Response struct {
 	Attachments  []Attachment `json:"attachments"`
 }
 
-// Command represents a slash command and its handler
-type Command struct {
-	Command string
-	Token   string
-	Handler Handler
-}
-
 // Handler function for repsonding to slack commands
-type Handler func(req *Request) (*Response, error)
+type HandlerFunc func(req *Request) (*Response, error)
 
-// NewCommand returns a new command for the given command (e.g. "/foo"), token, and handler
-func NewCommand(command, token string, h Handler) *Command {
-	c := &Command{}
-	c.Command = command
-	c.Token = token
-	c.Handler = h
-	return c
-}
-
+// Returns a new slack request from the given HTTP request
+// TODO: error handling?
 func newRequestFromHttpRequest(req *http.Request) *Request {
 	r := &Request{}
 	r.Token = req.FormValue("token")
@@ -84,16 +70,18 @@ func NewInChannelResponse(text string, attachments []Attachment) *Response {
 	return r
 }
 
-func HandleCommand(c *Command) {
-	http.HandleFunc(c.Command, func(w http.ResponseWriter, req *http.Request) {
+// Adds a new handler for the given command. The path and token should match the values
+// set via Slack for the command you wish to handle
+func HandleFunc(path, token string, h HandlerFunc) {
+	http.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
 		slackReq := newRequestFromHttpRequest(req)
-		if slackReq.Token != c.Token {
+		if slackReq.Token != token {
 			http.Error(w, "Invalid token", http.StatusForbidden)
 			return
 		}
-		log.Printf("Handling %s %s (channel=%s, user=%s)\n", c.Command, slackReq.Text, slackReq.ChannelName, slackReq.UserName)
+		log.Printf("Handling %s %s (channel=%s, user=%s)\n", path, slackReq.Text, slackReq.ChannelName, slackReq.UserName)
 
-		resp, err := c.Handler(slackReq)
+		resp, err := h(slackReq)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -114,7 +102,13 @@ func HandleCommand(c *Command) {
 	})
 }
 
-// ListenAndServeTLS serves all slash commands
+// Serves all slash commands over HTTP. Note that Slack requires Slash commands to run
+// over HTTPS, so generally ListenAndServeTLS should be used
+func ListenAndServe(addr string) error {
+	return http.ListenAndServe(addr, nil)
+}
+
+// ListenAndServeTLS serves all slash commands over HTTPS
 func ListenAndServeTLS(addr, certFile, keyFile string) error {
 	return http.ListenAndServeTLS(addr, certFile, keyFile, nil)
 }
